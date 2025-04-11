@@ -27,10 +27,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpat
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM alpine:latest
+FROM gcr.io/distroless/static-debian12
 WORKDIR /
 COPY --from=builder /workspace/manager .
-
-RUN apk add --no-cache iproute2
 
 ENTRYPOINT ["/manager"]
