@@ -93,14 +93,14 @@ func (h *Handler) handleBatch(c *jin.Context) {
 	// 设置响应头
 	c.Writer.Header().Set("Content-Type", ContentType)
 
-	//// 鉴权
-	//if err := h.authorizer.RequestAuthorizer(c.Request); err != nil {
-	//	c.Render(http.StatusUnauthorized, render.JSON{Data: LFSResponseError{
-	//		Message:          "Authentication required",
-	//		DocumentationURL: "https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md",
-	//	}})
-	//	return
-	//}
+	// 鉴权
+	if err := h.authorizer.RequestAuthorizer(c.Request); err != nil {
+		c.Render(http.StatusUnauthorized, render.JSON{Data: LFSResponseError{
+			Message:          "Authentication required",
+			DocumentationURL: "https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md",
+		}})
+		return
+	}
 
 	// 读取请求体
 	body, err := io.ReadAll(c.Request.Body)
