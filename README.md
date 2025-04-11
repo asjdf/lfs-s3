@@ -1,3 +1,5 @@
+![Banner](docs/images/banner.svg)
+
 # lfs-s3
 
 一个基于 S3 存储的 Git LFS 服务器实现。
@@ -51,7 +53,7 @@ lfsS3:
 docker pull ghcr.io/asjdf/lfs-s3:latest
 
 # 运行容器
-docker run -d -p 8080:8080 -v /path/to/config.yaml:/app/config.yaml ghcr.io/asjdf/lfs-s3:latest
+docker run -d -p 8080:8080 -v /path/to/config.yaml:/config.yaml ghcr.io/asjdf/lfs-s3:latest
 ```
 
 #### 开发者调试运行
