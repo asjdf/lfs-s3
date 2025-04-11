@@ -67,7 +67,7 @@ jobs:
     needs: [ pre-check ]
     if: |
       !cancelled() && 
-      (needs.go-lint.result == 'skipped' || needs.go-lint.result == 'success')
+      (needs.pre-check.result == 'skipped' || needs.pre-check.result == 'success')
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     outputs:
