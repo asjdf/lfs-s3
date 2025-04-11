@@ -1,0 +1,164 @@
+// Copyright 2019 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package goblet
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/google/gitprotocolio"
+	"go.opencensus.io/tag"
+	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+const (
+	checkFrequency = 1 * time.Second
+)
+
+func handleV2Command(ctx context.Context, repo *managedRepository, command []*gitprotocolio.ProtocolV2RequestChunk, w io.Writer) bool {
+	var err error
+	ctx, err = tag.New(ctx, tag.Upsert(CommandTypeKey, command[0].Command))
+	if err != nil {
+		return false
+	}
+
+	cacheState := "locally-served"
+	ctx, err = tag.New(ctx, tag.Upsert(CommandCacheStateKey, cacheState))
+	if err != nil {
+		return false
+	}
+	switch command[0].Command {
+	case "ls-refs":
+		resp, err := repo.lsRefsUpstream(command)
+		if err != nil {
+			return false
+		}
+
+		refs, err := parseLsRefsResponse(resp)
+		if err != nil {
+			return false
+		}
+
+		if hasUpdate, err := repo.hasAnyUpdate(refs); err != nil {
+			return false
+		} else if hasUpdate {
+			go func() {
+				_ = repo.fetchUpstream()
+			}()
+		}
+
+		_ = writeResp(w, resp)
+		return true
+
+	case "fetch":
+		wantHashes, wantRefs, err := parseFetchWants(command)
+		if err != nil {
+			return false
+		}
+
+		if hasAllWants, err := repo.hasAllWants(wantHashes, wantRefs); err != nil {
+			return false
+		} else if !hasAllWants {
+			ctx, err = tag.New(ctx, tag.Update(CommandCacheStateKey, "queried-upsteam"))
+			if err != nil {
+				return false
+			}
+
+			fetchDone := make(chan error, 1)
+			go func() {
+				fetchDone <- repo.fetchUpstream()
+			}()
+			timer := time.NewTimer(checkFrequency)
+		LOOP:
+			for {
+				select {
+				case <-ctx.Done():
+					return false
+				case err = <-fetchDone:
+					if err != nil {
+						zap.S().Errorw("拉取上游失败", "error", err)
+						return false
+					}
+					if hasAllWants, checkErr := repo.hasAllWants(wantHashes, wantRefs); checkErr != nil {
+						return false
+					} else if !hasAllWants {
+						return false
+					}
+					break LOOP
+				case <-timer.C:
+					if hasAllWants, err := repo.hasAllWants(wantHashes, wantRefs); err != nil {
+						return false
+					} else if hasAllWants {
+						break LOOP
+					}
+					timer.Reset(checkFrequency)
+				}
+			}
+		}
+
+		if err := repo.serveFetchLocal(command, w); err != nil {
+			fmt.Println(err.Error())
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+func parseLsRefsResponse(chunks []*gitprotocolio.ProtocolV2ResponseChunk) (map[string]plumbing.Hash, error) {
+	m := map[string]plumbing.Hash{}
+	for _, ch := range chunks {
+		if ch.Response == nil {
+			continue
+		}
+		ss := strings.Split(string(ch.Response), " ")
+		if len(ss) < 2 {
+			return nil, status.Errorf(codes.Internal, "cannot parse the upstream ls-refs response: got %d component, want at least 2", len(ss))
+		}
+		m[strings.TrimSpace(ss[1])] = plumbing.NewHash(ss[0])
+	}
+	return m, nil
+}
+
+func parseFetchWants(chunks []*gitprotocolio.ProtocolV2RequestChunk) ([]plumbing.Hash, []string, error) {
+	hashes := []plumbing.Hash{}
+	refs := []string{}
+	for _, ch := range chunks {
+		if ch.Argument == nil {
+			continue
+		}
+		s := string(ch.Argument)
+		if strings.HasPrefix(s, "want ") {
+			ss := strings.Split(s, " ")
+			if len(ss) < 2 {
+				return nil, nil, status.Errorf(codes.InvalidArgument, "cannot parse the fetch request: got %d component, want at least 2", len(ss))
+			}
+			hashes = append(hashes, plumbing.NewHash(strings.TrimSpace(ss[1])))
+		} else if strings.HasPrefix(s, "want-ref ") {
+			ss := strings.Split(s, " ")
+			if len(ss) < 2 {
+				return nil, nil, status.Errorf(codes.InvalidArgument, "cannot parse the fetch request: got %d component, want at least 2", len(ss))
+			}
+			refs = append(refs, strings.TrimSpace(ss[1]))
+		}
+	}
+	return hashes, refs, nil
+}

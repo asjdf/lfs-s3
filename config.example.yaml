@@ -1,0 +1,21 @@
+mode: debug
+port: ""
+log:
+    logPath: ""
+    cls:
+        endpoint: ""
+        accessKey: ""
+        accessToken: ""
+        topicID: ""
+sentryDsn: ""
+lfsS3:
+    s3:
+        externalEndpoint: ""
+        endpoint: ""
+        accessKeyID: ""
+        secretAccessKey: ""
+        bucketName: ""
+        region: ""
+        pathStyle: false
+    auth:
+        enableCache: false
